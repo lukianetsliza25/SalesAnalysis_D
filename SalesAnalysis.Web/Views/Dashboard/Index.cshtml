@@ -1,0 +1,312 @@
+﻿@* SalesAnalysis.Web/Views/Dashboard/Index.cshtml *@
+@using SalesAnalysis.Core.Models 
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script> 
+
+@{
+    ViewData["Title"] = "Аналітичний Дашборд Продажів";
+
+    int currentPage = ViewBag.CurrentPage ?? 1;
+    int totalPages = ViewBag.TotalPages ?? 1;
+    int totalCustomers = ViewBag.TotalCustomers ?? 0;
+    int rowsPerPage = 30;
+    int startRange = (currentPage - 1) * rowsPerPage + 1;
+    int endRange = Math.Min(currentPage * rowsPerPage, totalCustomers);
+
+}
+
+<style>
+    body {
+        font-family: 'Inter', sans-serif;
+        background-color: #f4f7f9;
+    }
+</style>
+<body>
+<!-- ======= HEADER / NAVBAR ======= -->
+
+
+<div class="w-full px-4 sm:px-8">
+
+    <div class="text-center mb-10">
+        <h1 class="text-4xl font-extrabold text-gray-800 mb-2">Огляд Продажів</h1>
+    </div>
+
+
+    <!-- ================= KPI CARDS + SPARKLINES ================ -->
+    <div class="max-w-6xl mx-auto grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8 mb-10">
+
+
+        <!-- Total Revenue -->
+        <div class="bg-white p-6 rounded-xl shadow-lg border-l-4 border-green-500">
+            <h5 class="text-lg font-medium text-gray-500">Загальний Дохід</h5>
+            <p class="text-4xl font-bold text-green-700 mt-1">@(((decimal)ViewBag.TotalRevenue).ToString("C"))</p>
+            <canvas id="sparkTotalRevenue" height="50"></canvas>
+        </div>
+
+        <!-- Average Order -->
+        <div class="bg-white p-6 rounded-xl shadow-lg border-l-4 border-blue-500">
+            <h5 class="text-lg font-medium text-gray-500">Середній чек</h5>
+            <p class="text-3xl font-semibold text-blue-700 mt-1">@ViewBag.AverageOrderValue ₴</p>
+            <canvas id="sparkAvgOrder" height="50"></canvas>
+        </div>
+
+        <!-- Unique Customers -->
+        <div class="bg-white p-6 rounded-xl shadow-lg border-l-4 border-purple-500">
+            <h5 class="text-lg font-medium text-gray-500">Унікальних клієнтів</h5>
+            <p class="text-3xl font-semibold text-purple-700 mt-1">@ViewBag.UniqueCustomers</p>
+            <canvas id="sparkCustomers" height="50"></canvas>
+        </div>
+
+        <!-- Avg Spend -->
+        <div class="bg-white p-6 rounded-xl shadow-lg border-l-4 border-orange-500">
+            <h5 class="text-lg font-medium text-gray-500">Дохід на клієнта</h5>
+            <p class="text-3xl font-semibold text-orange-700 mt-1">@ViewBag.AvgCustomerSpend ₴</p>
+            <canvas id="sparkSpend" height="50"></canvas>
+        </div>
+
+        <!-- Frequency -->
+        <div class="bg-white p-6 rounded-xl shadow-lg border-l-4 border-teal-500">
+            <h5 class="text-lg font-medium text-gray-500">Частота покупок</h5>
+            <p class="text-3xl font-semibold text-teal-700 mt-1">@ViewBag.AvgFrequency</p>
+            <canvas id="sparkFrequency" height="50"></canvas>
+        </div>
+
+        <!-- Best & Worst Month -->
+        <div class="bg-white p-6 rounded-xl shadow-lg border-l-4 border-red-500">
+
+    <h5 class="text-lg font-medium text-gray-500 mb-3">
+        Найкращий / Найгірший місяць
+    </h5>
+
+    <div class="mb-4">
+        <span class="font-semibold text-gray-600">Кращий:</span>
+        <span class="font-bold text-green-600">
+            @ViewBag.BestMonthName — @ViewBag.BestMonth ₴
+        </span>
+    </div>
+
+    <div>
+        <span class="font-semibold text-gray-600">Гірший:</span>
+        <span class="font-bold text-red-600">
+            @ViewBag.WorstMonthName — @ViewBag.WorstMonth ₴
+        </span>
+    </div>
+
+</div>
+
+
+    </div>
+
+
+    <!-- ================= MAIN FORECAST CHART ================ -->
+    <div class="bg-white p-6 rounded-xl shadow-lg mb-10">
+        <h3 class="text-2xl font-semibold text-gray-800 mb-4 border-b pb-2 text-center">
+    Динаміка Продажів та Прогноз на 12 Місяців
+</h3>
+        <canvas id="salesChart" height="100"></canvas>
+    </div>
+
+
+    <!-- ================= CLUSTER TABLE (unchanged) ================ -->
+    <div class="bg-white p-6 rounded-xl shadow-lg overflow-x-auto">
+        @if (ViewBag.ClusteredCustomers is List<ClusteredCustomer> customers && customers.Any())
+        {
+            <h3 class="text-2xl font-semibold text-gray-800 mb-4 border-b pb-2 text-center">
+                Сегментація Клієнтів (K-Means)
+            </h3>
+
+            <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th class="px-4 py-3 text-left">ID Клієнта</th>
+                        <th class="px-4 py-3 text-left">Загальний Дохід</th>
+                        <th class="px-4 py-3 text-left">Частота Покупок</th>
+                        <th class="px-4 py-3 text-left">Кластер</th>
+                        <th class="px-4 py-3 text-left">Опис</th>
+                    </tr>
+                </thead>
+
+                <tbody class="divide-y divide-gray-200">
+                    @foreach (var customer in customers)
+                    {
+                        <tr class="hover:bg-gray-100">
+                            <td class="px-4 py-3">@customer.CustomerId</td>
+                            <td class="px-4 py-3">@customer.TotalSpent.ToString("C")</td>
+                            <td class="px-4 py-3">@customer.PurchaseFrequency</td>
+                            <td class="px-4 py-3">@customer.ClusterId</td>
+                            <td class="px-4 py-3">
+                                <span class="px-2 py-1 rounded-full text-xs font-semibold
+                                    @(customer.ClusterId == 1 ? "bg-red-100 text-red-800" :
+                                      customer.ClusterId == 2 ? "bg-yellow-100 text-yellow-800" :
+                                      customer.ClusterId == 3 ? "bg-green-100 text-green-800" :
+                                      "bg-blue-100 text-blue-800")">
+                                    @customer.ClusterDescription
+                                </span>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+
+            <div class="flex justify-between items-center mt-4">
+                <p class="text-sm text-gray-600">
+                    Показано @startRange–@endRange з @totalCustomers (Сторінка @currentPage з @totalPages)
+                </p>
+
+                <div>
+                    <a href="@Url.Action("Index", new { page = currentPage - 1 })"
+                       class="px-3 py-1 bg-blue-500 text-white rounded-lg @(currentPage == 1 ? "opacity-50" : "hover:bg-blue-600")">
+                        Попередня
+                    </a>
+
+                    <a href="@Url.Action("Index", new { page = currentPage + 1 })"
+                       class="px-3 py-1 bg-blue-500 text-white rounded-lg @(currentPage == totalPages ? "opacity-50" : "hover:bg-blue-600")">
+                        Наступна
+                    </a>
+                </div>
+            </div>
+        }
+        else
+        {
+            <p class="text-gray-500">Недостатньо даних для кластеризації.</p>
+        }
+    </div>
+</div>
+</body>
+
+<!-- ================= CHART SCRIPTS ================= -->
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+
+    const history = @Html.Raw(ViewBag.HistoryDataJson);
+    const prediction = @Html.Raw(ViewBag.PredictionDataJson);
+
+    /* ------- SPARKLINES GENERATOR ------- */
+    function spark(id, data, color) {
+        new Chart(document.getElementById(id), {
+            type: "line",
+            data: {
+                labels: data.map((_, i) => i),
+                datasets: [{
+                    data: data,
+                    borderColor: color,
+                    borderWidth: 2,
+                    fill: false,
+                    tension: 0.3,
+                    pointRadius: 0
+                }]
+            },
+            options: {
+                plugins: { legend: { display: false }},
+                scales: { x: { display: false }, y: { display: false }},
+                responsive: true,
+            }
+        });
+    }
+
+    spark("sparkTotalRevenue", history, "#16a34a");
+    spark("sparkAvgOrder", history.map(v => v / 50000), "#2563eb");
+    spark("sparkCustomers", history.map(() => Math.random() * 100), "#7c3aed");
+    spark("sparkSpend", history.map(v => v / 30000), "#f97316");
+    spark("sparkFrequency", history.map(v => v / 70000), "#0d9488");
+
+
+    /* ------- MAIN FORECAST CHART ------- */
+    function generateMonthLabels(startYear, startMonth, totalCount) {
+    const months = [
+        "Січень", "Лютий", "Березень", "Квітень", "Травень", "Червень",
+        "Липень", "Серпень", "Вересень", "Жовтень", "Листопад", "Грудень"
+    ];
+
+    let labels = [];
+    let year = startYear;
+    let month = startMonth - 1; // від 0 до 11
+
+    for (let i = 0; i < totalCount; i++) {
+        labels.push(`${months[month]} ${year}`);
+
+        month++;
+        if (month === 12) {
+            month = 0;
+            year++;
+        }
+    }
+    return labels;
+}
+
+// історія починається з січня 2024
+    // Змінюємо початковий рік на 2023 (згідно з вашим CSV)
+    const historyLabels = generateMonthLabels(2023, 1, history.length);
+
+    // Визначаємо початок прогнозу
+    const totalMonths = history.length;
+    const startForecastMonth = (1 + totalMonths - 1) % 12 + 1;
+    const startForecastYear = 2023 + Math.floor(totalMonths / 12);
+
+    const forecastLabels = generateMonthLabels(startForecastYear, startForecastMonth, prediction.length);
+    const labels = [...historyLabels, ...forecastLabels];
+
+    // Щоб лінія прогнозу з'єднувалася з історією, додаємо останню точку історії в початок прогнозу
+    const lastHistoryPoint = history[history.length - 1];
+    const displayPrediction = [
+        ...Array(history.length - 1).fill(null),
+        lastHistoryPoint,
+        ...prediction
+    ];
+
+    const forecastData = [
+        ...history,
+        ...Array(history.length).fill(null).map((_, i) => prediction[i] ?? null)
+    ];
+
+        const canvasMain = document.getElementById("salesChart");
+    if (canvasMain) {
+        // З'єднуємо історію з прогнозом (остання точка історії + прогноз)
+        const displayPrediction = [
+            ...Array(history.length - 1).fill(null),
+            history[history.length - 1],
+            ...prediction
+        ];
+
+        new Chart(canvasMain, {
+            type: "line",
+            data: {
+                labels: labels,
+                datasets: [
+                    {
+                        label: "Історичний Дохід",
+                        data: history,
+                        borderColor: "rgb(59,130,246)",
+                        backgroundColor: "rgba(59,130,246,0.15)",
+                        fill: true,
+                        tension: 0.3
+                    },
+                    {
+                        label: "Прогноз ML.NET",
+                        data: displayPrediction, // Використовуємо з'єднаний масив
+                        borderColor: "rgb(239,68,68)",
+                        borderDash: [5, 5],
+                        fill: false,
+                        tension: 0.4
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                plugins: {
+                    legend: { position: "top" }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: false,
+                        ticks: {
+                            callback: function(value) { return value.toLocaleString() + ' ₴'; }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+});
+</script>
