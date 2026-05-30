@@ -1,8 +1,7 @@
 ﻿using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.AspNetCore.Identity; // ДОДАНО
+using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.InMemory;
 using Microsoft.Extensions.DependencyInjection;
 using Moq;
 using NUnit.Framework;
@@ -13,8 +12,8 @@ using SalesAnalysis.Data.Services;
 using SalesAnalysis.ML.Services;
 using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Security.Claims; // ДОДАНО для ClaimsPrincipal
+using System.Security.Claims;
+using System.Text.Json;
 using System.Threading.Tasks;
 
 namespace SalesAnalysis.Tests
@@ -23,21 +22,55 @@ namespace SalesAnalysis.Tests
     public class DashboardControllerTests
     {
         private ServiceProvider _serviceProvider;
-        private readonly int _testUserId = 1; // ID нашого тестового користувача
+        private readonly int _testUserId = 1;
 
         private void SeedMinimumClusterData(SalesDbContext ctx)
         {
-            // Важливо: додаємо UserId = _testUserId до всіх транзакцій
+            // Наповнюємо базу транзакціями за ТРИ різні місяці:
+            // Січень і Лютий система пропустить як повністю закриті, а Березень відфільтрує як неповний.
             ctx.Transactions.AddRange(new[]
             {
+                // Січень 2024 (Разом 400 ₴)
                 new Transaction { UserId = _testUserId, CustomerId = "C1", ProductId = "P1", Date = new DateTime(2024,1,1), Revenue = 100, Quantity = 1, ProductName = "Test" },
-                new Transaction { UserId = _testUserId, CustomerId = "C1", ProductId = "P2", Date = new DateTime(2024,1,5), Revenue = 120, Quantity = 1, ProductName = "Test" },
-                new Transaction { UserId = _testUserId, CustomerId = "C2", ProductId = "P3", Date = new DateTime(2024,1,2), Revenue = 90,  Quantity = 1, ProductName = "Test" },
-                new Transaction { UserId = _testUserId, CustomerId = "C2", ProductId = "P4", Date = new DateTime(2024,1,6), Revenue = 110, Quantity = 1, ProductName = "Test" },
-                new Transaction { UserId = _testUserId, CustomerId = "C3", ProductId = "P5", Date = new DateTime(2024,1,3), Revenue = 95,  Quantity = 1, ProductName = "Test" },
-                new Transaction { UserId = _testUserId, CustomerId = "C3", ProductId = "P6", Date = new DateTime(2024,1,7), Revenue = 105, Quantity = 1, ProductName = "Test" },
-                new Transaction { UserId = _testUserId, CustomerId = "C4", ProductId = "P7", Date = new DateTime(2024,1,4), Revenue = 100, Quantity = 1, ProductName = "Test" },
-                new Transaction { UserId = _testUserId, CustomerId = "C4", ProductId = "P8", Date = new DateTime(2024,1,8), Revenue = 115, Quantity = 1, ProductName = "Test" }
+                new Transaction { UserId = _testUserId, CustomerId = "C1", ProductId = "P2", Date = new DateTime(2024,1,5), Revenue = 100, Quantity = 1, ProductName = "Test" },
+                new Transaction { UserId = _testUserId, CustomerId = "C2", ProductId = "P3", Date = new DateTime(2024,1,2), Revenue = 100, Quantity = 1, ProductName = "Test" },
+                new Transaction { UserId = _testUserId, CustomerId = "C2", ProductId = "P4", Date = new DateTime(2024,1,6), Revenue = 100, Quantity = 1, ProductName = "Test" },
+
+                // Лютий 2024 (Разом 400 ₴)
+                new Transaction { UserId = _testUserId, CustomerId = "C3", ProductId = "P5", Date = new DateTime(2024,2,3), Revenue = 100, Quantity = 1, ProductName = "Test" },
+                new Transaction { UserId = _testUserId, CustomerId = "C3", ProductId = "P6", Date = new DateTime(2024,2,7), Revenue = 100, Quantity = 1, ProductName = "Test" },
+                new Transaction { UserId = _testUserId, CustomerId = "C4", ProductId = "P7", Date = new DateTime(2024,2,4), Revenue = 100, Quantity = 1, ProductName = "Test" },
+                new Transaction { UserId = _testUserId, CustomerId = "C4", ProductId = "P8", Date = new DateTime(2024,2,8), Revenue = 100, Quantity = 1, ProductName = "Test" },
+
+                // Березень 2024 (Технічний неповний місяць — разом 50 ₴. Буде відфільтрований)
+                new Transaction { UserId = _testUserId, CustomerId = "C1", ProductId = "P9", Date = new DateTime(2024,3,15), Revenue = 50,  Quantity = 1, ProductName = "Test" }
+            });
+
+            // Імітуємо готовий кеш штучного інтелекту в базі, щоб контролер не намагався писати файли моделей на диск
+            var fakeClusters = new List<ClusteredCustomer>
+            {
+                new ClusteredCustomer { CustomerId = "C1", ClusterId = 2, ClusterDescription = "Постійний" },
+                new ClusteredCustomer { CustomerId = "C2", ClusterId = 2, ClusterDescription = "Постійний" },
+                new ClusteredCustomer { CustomerId = "C3", ClusterId = 2, ClusterDescription = "Постійний" },
+                new ClusteredCustomer { CustomerId = "C4", ClusterId = 2, ClusterDescription = "Постійний" }
+            };
+            var fakeKpi = new List<MonthlyKpiData>
+            {
+                new MonthlyKpiData { MonthIndex = "2024-01", TotalRevenue = 400 },
+                new MonthlyKpiData { MonthIndex = "2024-02", TotalRevenue = 400 }
+            };
+
+            ctx.SavedAnalyses.AddRange(new[]
+            {
+                new SavedAnalysis { UserId = _testUserId, ProductId = "ALL", AnalysisType = "CustomerClusters", ResultJson = JsonSerializer.Serialize(fakeClusters), CreatedAt = DateTime.UtcNow },
+                new SavedAnalysis { UserId = _testUserId, ProductId = "ALL", AnalysisType = "MonthlyKpiHistory", ResultJson = JsonSerializer.Serialize(fakeKpi), CreatedAt = DateTime.UtcNow },
+                new SavedAnalysis { UserId = _testUserId, ProductId = "ALL", AnalysisType = "SalesForecastFastTree", ResultJson = "[100,120]", CreatedAt = DateTime.UtcNow },
+                new SavedAnalysis { UserId = _testUserId, ProductId = "ALL", AnalysisType = "SalesForecastLinear", ResultJson = "[100,120]", CreatedAt = DateTime.UtcNow },
+                new SavedAnalysis { UserId = _testUserId, ProductId = "ALL", AnalysisType = "BestModelName", ResultJson = "\"FastTree\"", CreatedAt = DateTime.UtcNow },
+                new SavedAnalysis { UserId = _testUserId, ProductId = "ALL", AnalysisType = "R2FastTree", ResultJson = "0.9", CreatedAt = DateTime.UtcNow },
+                new SavedAnalysis { UserId = _testUserId, ProductId = "ALL", AnalysisType = "R2Linear", ResultJson = "0.2", CreatedAt = DateTime.UtcNow },
+                new SavedAnalysis { UserId = _testUserId, ProductId = "ALL", AnalysisType = "RmseFastTree", ResultJson = "100", CreatedAt = DateTime.UtcNow },
+                new SavedAnalysis { UserId = _testUserId, ProductId = "ALL", AnalysisType = "RmseLinear", ResultJson = "200", CreatedAt = DateTime.UtcNow }
             });
         }
 
@@ -57,32 +90,47 @@ namespace SalesAnalysis.Tests
 
         public DashboardController CreateController(Action<SalesDbContext> seed)
         {
-            using (var scope = _serviceProvider.CreateScope())
-            {
-                var ctx = scope.ServiceProvider.GetRequiredService<SalesDbContext>();
-                seed(ctx);
-                ctx.SaveChanges();
-            }
+            var ctx = _serviceProvider.GetRequiredService<SalesDbContext>();
 
-            // Налаштування Mock для UserManager (Виправлено помилки CS0246)
+            seed(ctx);
+            ctx.SaveChanges();
+
             var store = new Mock<IUserStore<IdentityUser<int>>>();
-            var mockUserManager = new Mock<UserManager<IdentityUser<int>>>(
-                store.Object, null, null, null, null, null, null, null, null);
 
-            // Налаштовуємо повернення ID = 1 (Виправлено CS1503: string -> int)
-            mockUserManager.Setup(x => x.GetUserId(It.IsAny<ClaimsPrincipal>()))
-                           .Returns(_testUserId.ToString());
+            var mockUserManager = new Mock<UserManager<IdentityUser<int>>>(
+                store.Object,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null);
+
+            mockUserManager
+                .Setup(x => x.GetUserId(It.IsAny<ClaimsPrincipal>()))
+                .Returns(_testUserId.ToString());
 
             var controller = new DashboardController(
                 _serviceProvider.GetRequiredService<AnalysisService>(),
                 _serviceProvider.GetRequiredService<ClusteringService>(),
                 _serviceProvider.GetRequiredService<PredictionService>(),
-                mockUserManager.Object
-            );
+                mockUserManager.Object);
+
+            var user = new ClaimsPrincipal(
+                new ClaimsIdentity(
+                [
+                    new Claim(ClaimTypes.NameIdentifier, _testUserId.ToString())
+                ],
+                "TestAuth"));
 
             controller.ControllerContext = new ControllerContext
             {
-                HttpContext = new DefaultHttpContext()
+                HttpContext = new DefaultHttpContext
+                {
+                    User = user
+                }
             };
 
             return controller;
@@ -94,7 +142,6 @@ namespace SalesAnalysis.Tests
             var controller = CreateController(ctx => { });
             var result = await controller.Index();
 
-            // Тепер, за вашою новою логікою, якщо даних немає — має бути Redirect
             Assert.IsInstanceOf<RedirectToActionResult>(result);
             var redirect = (RedirectToActionResult)result;
             Assert.AreEqual("Import", redirect.ControllerName);
@@ -103,12 +150,21 @@ namespace SalesAnalysis.Tests
         [Test]
         public async Task Index_ComputesBasicKpi()
         {
-            var controller = CreateController(ctx => SeedMinimumClusterData(ctx));
-            await controller.Index();
+            var controller = CreateController(SeedMinimumClusterData);
 
-            Assert.AreEqual(835m, (decimal)controller.ViewBag.TotalRevenue);
-            Assert.AreEqual(8, (int)controller.ViewBag.TotalTransactions);
-            Assert.AreEqual(4, (int)controller.ViewBag.UniqueCustomers);
+            var result = await controller.Index();
+            Console.WriteLine(result.GetType().Name);
+
+            Assert.IsInstanceOf<ViewResult>(result);
+
+            Assert.That(controller.ViewBag.TotalRevenue, Is.Not.Null);
+            Assert.That((decimal)controller.ViewBag.TotalRevenue, Is.EqualTo(850m));
+
+            Assert.That(controller.ViewBag.TotalTransactions, Is.Not.Null);
+            Assert.That((int)controller.ViewBag.TotalTransactions, Is.EqualTo(9));
+
+            Assert.That(controller.ViewBag.UniqueCustomers, Is.Not.Null);
+            Assert.That((int)controller.ViewBag.UniqueCustomers, Is.EqualTo(4));
         }
     }
 }
