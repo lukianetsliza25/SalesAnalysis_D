@@ -41,43 +41,47 @@ public class DashboardController : Controller
         if (string.IsNullOrEmpty(userStrId)) return Challenge();
         int userId = int.Parse(userStrId);
 
-        // 2. Швидка перевірка: чи взагалі є якісь дані у користувача (щоб не пускати далі, якщо база порожня)
+        // 2. Перевірка наявності даних
         var totalTransactions = await _analysisService.GetTotalTransactionsAsync(userId);
         if (totalTransactions == 0)
         {
             return RedirectToAction("Index", "Import");
         }
 
-        // Ініціалізуємо змінні для збереження аналітичних зрізів
         var result = new List<ClusteredCustomer>();
         var monthlyKpi = new List<MonthlyKpiData>();
         var monthlyData = new List<SalesDataPoint>();
         List<float> historyData = new List<float>();
-        List<float> predictionData = new List<float>();
 
-        // Спробуємо дістати вже існуючі збережені результати з таблиці `SavedAnalyses`
+        List<float> predictionDataFastTree = new List<float>();
+        List<float> predictionDataLinear = new List<float>();
+
+        // Спробуємо дістати вже існуючі збережені результати з бази
         var cachedClustersJson = await _analysisService.GetLastAnalysisResultAsync(userId, "CustomerClusters");
         var cachedKpiJson = await _analysisService.GetLastAnalysisResultAsync(userId, "MonthlyKpiHistory");
-        var cachedForecastJson = await _analysisService.GetLastAnalysisResultAsync(userId, "SalesForecast");
 
-        // Ознака того, чи вдалося нам відновити базову аналітику з бази даних
+        var cachedForecastFastTree = await _analysisService.GetLastAnalysisResultAsync(userId, "SalesForecastFastTree");
+        var cachedForecastLinear = await _analysisService.GetLastAnalysisResultAsync(userId, "SalesForecastLinear");
+        var cachedBestModelName = await _analysisService.GetLastAnalysisResultAsync(userId, "BestModelName");
+
+        // КЛЮЧОВЕ ОНОВЛЕННЯ: дістаємо збережені похибки та точність з бази
+        var cachedR2FastTree = await _analysisService.GetLastAnalysisResultAsync(userId, "R2FastTree");
+        var cachedR2Linear = await _analysisService.GetLastAnalysisResultAsync(userId, "R2Linear");
+        var cachedRmseFastTree = await _analysisService.GetLastAnalysisResultAsync(userId, "RmseFastTree");
+        var cachedRmseLinear = await _analysisService.GetLastAnalysisResultAsync(userId, "RmseLinear");
+
         bool isClusteringCached = !string.IsNullOrEmpty(cachedClustersJson) && cachedClustersJson != "[]";
         bool isKpiCached = !string.IsNullOrEmpty(cachedKpiJson) && cachedKpiJson != "[]";
-        bool isForecastCached = !string.IsNullOrEmpty(cachedForecastJson) && cachedForecastJson != "[]";
 
         // =========================================================================
-        // СЦЕНАРІЙ А: ВСІ ДАНІ ЗНАЙДЕНО В КЕШІ (Сторінка завантажується за мікросекунди)
+        // СЦЕНАРІЙ А: ВСІ ДАНІ ЗНАЙДЕНО В КЕШІ (Швидке завантаження без ML-навантаження)
         // =========================================================================
         if (isClusteringCached && isKpiCached)
         {
-            // 1. Відновлюємо сегментацію клієнтів
             result = JsonSerializer.Deserialize<List<ClusteredCustomer>>(cachedClustersJson) ?? new List<ClusteredCustomer>();
-
-            // 2. Відновлюємо історію місячних KPI
             monthlyKpi = JsonSerializer.Deserialize<List<MonthlyKpiData>>(cachedKpiJson) ?? new List<MonthlyKpiData>();
             ViewBag.KpiHistory = monthlyKpi;
 
-            // 3. Формуємо базові KPI картки на основі збереженого масиву
             ViewBag.TotalRevenue = await _analysisService.GetTotalRevenueAsync(userId);
             ViewBag.TotalTransactions = totalTransactions;
             ViewBag.UniqueCustomers = result.Count;
@@ -85,7 +89,6 @@ public class DashboardController : Controller
             ViewBag.AvgCustomerSpend = Math.Round(result.Count > 0 ? (decimal)ViewBag.TotalRevenue / result.Count : 0, 2);
             ViewBag.AvgFrequency = Math.Round(result.Count > 0 ? (float)totalTransactions / result.Count : 0, 2);
 
-            // 4. Отримуємо чисті історичні точки продажів для графіка (вони потрібні завжди для рендерингу)
             monthlyData = await _analysisService.GetMonthlySalesDataAsync(userId);
             historyData = monthlyData.Select(d => d.SalesAmount).ToList();
 
@@ -99,19 +102,22 @@ public class DashboardController : Controller
                 ViewBag.WorstMonthName = $"Місяць #{worst.TimeIndex}";
             }
 
-            // 5. Відновлюємо прогноз часового ряду
-            if (isForecastCached)
-            {
-                predictionData = JsonSerializer.Deserialize<List<float>>(cachedForecastJson) ?? new List<float>();
-                ViewBag.NextMonthPrediction = predictionData.FirstOrDefault();
-            }
+            predictionDataFastTree = !string.IsNullOrEmpty(cachedForecastFastTree) ? JsonSerializer.Deserialize<List<float>>(cachedForecastFastTree) : new List<float>();
+            predictionDataLinear = !string.IsNullOrEmpty(cachedForecastLinear) ? JsonSerializer.Deserialize<List<float>>(cachedForecastLinear) : new List<float>();
+
+            ViewBag.BestModelText = !string.IsNullOrEmpty(cachedBestModelName) ? JsonSerializer.Deserialize<string>(cachedBestModelName) : "Не визначено";
+
+            // Відновлюємо метрики точності з кешу для панелі розробника
+            ViewBag.R2FastTree = !string.IsNullOrEmpty(cachedR2FastTree) ? JsonSerializer.Deserialize<double>(cachedR2FastTree) : 0.0;
+            ViewBag.R2Linear = !string.IsNullOrEmpty(cachedR2Linear) ? JsonSerializer.Deserialize<double>(cachedR2Linear) : 0.0;
+            ViewBag.RmseFastTree = !string.IsNullOrEmpty(cachedRmseFastTree) ? JsonSerializer.Deserialize<int>(cachedRmseFastTree) : 0;
+            ViewBag.RmseLinear = !string.IsNullOrEmpty(cachedRmseLinear) ? JsonSerializer.Deserialize<int>(cachedRmseLinear) : 0;
         }
         // =========================================================================
-        // СЦЕНАРІЙ Б: КЕШУ НЕМАЄ (Перший запуск після імпорту файлу)
+        // СЦЕНАРІЙ Б: КЕШУ НЕМАЄ (Перший запуск моделі, тренування та аналіз похибок)
         // =========================================================================
         else
         {
-            // 1. Розраховуємо загальні KPI з бази даних в реальному часі
             ViewBag.TotalRevenue = await _analysisService.GetTotalRevenueAsync(userId);
             ViewBag.TotalTransactions = totalTransactions;
 
@@ -137,7 +143,7 @@ public class DashboardController : Controller
                 ViewBag.WorstMonthName = $"Місяць #{worst.TimeIndex}";
             }
 
-            // 2. НАВЧАННЯ МОДЕЛІ КЛАСТЕРИЗАЦІЇ K-MEANS
+            // Кластеризація K-Means
             if (allData.Any())
             {
                 try
@@ -159,14 +165,7 @@ public class DashboardController : Controller
                         int logicalId = (item.Pred.PredictedClusterId == vipClusterId) ? 3 : ((item.Pred.PredictedClusterId == lowClusterId) ? 1 : 2);
                         string description = (logicalId == 3) ? "Високоцінний (VIP)" : ((logicalId == 1) ? "Новий / Рідкісний" : "Постійний (Середній)");
 
-                        result.Add(new ClusteredCustomer
-                        {
-                            CustomerId = item.Data.CustomerId,
-                            TotalSpent = item.Data.TotalSpent,
-                            PurchaseFrequency = item.Data.PurchaseFrequency,
-                            ClusterId = logicalId,
-                            ClusterDescription = description
-                        });
+                        result.Add(new ClusteredCustomer { CustomerId = item.Data.CustomerId, TotalSpent = item.Data.TotalSpent, PurchaseFrequency = item.Data.PurchaseFrequency, ClusterId = logicalId, ClusterDescription = description });
                     }
                 }
                 catch (Exception ex)
@@ -179,37 +178,72 @@ public class DashboardController : Controller
                 }
             }
 
-            // 3. НАВЧАННЯ МОДЕЛІ ПРОГНОЗУВАННЯ
+            // --- 6. ПОРІВНЯННЯ МОДЕЛЕЙ ПРОГНОЗУВАННЯ ---
             historyData = monthlyData.Select(d => d.SalesAmount).ToList();
+            string bestModelText = "Недостатньо даних";
 
-            if (isForecastCached)
-            {
-                predictionData = JsonSerializer.Deserialize<List<float>>(cachedForecastJson) ?? new List<float>();
-                ViewBag.NextMonthPrediction = predictionData.FirstOrDefault();
-            }
-            else if (monthlyData.Count >= 2)
+            if (monthlyData.Count >= 2)
             {
                 try
                 {
-                    var predictionModel = _predictionService.TrainAndSaveModel(_predictionService.MLContext.Data.LoadFromEnumerable(monthlyData));
+                    var dataView = _predictionService.MLContext.Data.LoadFromEnumerable(monthlyData);
                     var lastMonthEntry = monthlyData.OrderByDescending(d => d.TimeIndex).First();
+                    float nextIndex = lastMonthEntry.TimeIndex + 1;
+                    int lastMonthValue = (int)lastMonthEntry.MonthOfYear;
 
-                    predictionData = _predictionService.PredictNPeriods(predictionModel, lastMonthEntry.TimeIndex + 1, PREDICTION_PERIODS, (int)lastMonthEntry.MonthOfYear);
+                    var modelFastTree = _predictionService.TrainAndSaveModel(dataView);
+                    var modelLinear = _predictionService.TrainAndSaveLinearModel(dataView);
 
-                    if (predictionData != null && predictionData.Any())
+                    predictionDataFastTree = _predictionService.PredictNPeriods(modelFastTree, nextIndex, PREDICTION_PERIODS, lastMonthValue);
+                    predictionDataLinear = _predictionService.PredictNPeriods(modelLinear, nextIndex, PREDICTION_PERIODS, lastMonthValue);
+
+                    // Математична оцінка точності
+                    var evaluateFastTree = _predictionService.MLContext.Regression.Evaluate(modelFastTree.Transform(dataView), "Label");
+                    var evaluateLinear = _predictionService.MLContext.Regression.Evaluate(modelLinear.Transform(dataView), "Label");
+
+                    double r2FastTree = Math.Round(Math.Max(0, evaluateFastTree.RSquared), 2);
+                    double r2Linear = Math.Round(Math.Max(0, evaluateLinear.RSquared), 2);
+
+                    // Отримуємо чисту похибку у вигляді цілого числа (гривень)
+                    int rmseFastTree = (int)evaluateFastTree.RootMeanSquaredError;
+                    int rmseLinear = (int)evaluateLinear.RootMeanSquaredError;
+
+                    // Записуємо у ViewBag
+                    ViewBag.R2FastTree = r2FastTree;
+                    ViewBag.R2Linear = r2Linear;
+                    ViewBag.RmseFastTree = rmseFastTree;
+                    ViewBag.RmseLinear = rmseLinear;
+
+                    if (r2FastTree >= r2Linear)
                     {
-                        ViewBag.NextMonthPrediction = predictionData.FirstOrDefault();
-                        await _analysisService.SaveAnalysisResultAsync(userId, "ALL", "SalesForecast", predictionData);
+                        bestModelText = "FastTree (Дерева рішень)";
                     }
+                    else
+                    {
+                        bestModelText = "Лінійна Регресія (SDCA)";
+                    }
+
+                    ViewBag.BestModelText = bestModelText;
+
+                    // Зберігаємо прогнози та похибки в базу даних
+                    await _analysisService.SaveAnalysisResultAsync(userId, "ALL", "SalesForecastFastTree", predictionDataFastTree);
+                    await _analysisService.SaveAnalysisResultAsync(userId, "ALL", "SalesForecastLinear", predictionDataLinear);
+                    await _analysisService.SaveAnalysisResultAsync(userId, "ALL", "BestModelName", bestModelText);
+
+                    await _analysisService.SaveAnalysisResultAsync(userId, "ALL", "R2FastTree", r2FastTree);
+                    await _analysisService.SaveAnalysisResultAsync(userId, "ALL", "R2Linear", r2Linear);
+                    await _analysisService.SaveAnalysisResultAsync(userId, "ALL", "RmseFastTree", rmseFastTree);
+                    await _analysisService.SaveAnalysisResultAsync(userId, "ALL", "RmseLinear", rmseLinear);
                 }
                 catch (Exception ex)
                 {
                     System.Diagnostics.Debug.WriteLine($"ML Forecast Error: {ex.Message}");
-                    ViewBag.NextMonthPrediction = 0.0f;
+                    bestModelText = $"Помилка ML: {ex.Message}";
+                    ViewBag.BestModelText = bestModelText;
                 }
             }
 
-            // 4. ГАРАНТОВАНЕ ЗБЕРЕЖЕННЯ РЕЗУЛЬТАТІВ У КЕШ ТАБЛИЦІ
+            // Зберігаємо KPI та кластери
             try
             {
                 if (monthlyKpi != null && monthlyKpi.Any())
@@ -224,7 +258,7 @@ public class DashboardController : Controller
             }
         }
 
-        // --- 5. ПАГІНАЦІЯ СЕГМЕНТОВАНИХ КЛІЄНТІВ ---
+        // Пагінація
         int total = result.Count;
         int totalPages = (int)Math.Ceiling(total / (double)PAGE_SIZE);
         int currentPage = 1;
@@ -236,9 +270,11 @@ public class DashboardController : Controller
         ViewBag.CurrentPage = currentPage;
         ViewBag.TotalPages = totalPages;
 
-        // Передача серіалізованих масивів у JavaScript представлення
         ViewBag.HistoryDataJson = JsonSerializer.Serialize(historyData);
-        ViewBag.PredictionDataJson = JsonSerializer.Serialize(predictionData);
+        ViewBag.PredictionFastTreeJson = JsonSerializer.Serialize(predictionDataFastTree);
+        ViewBag.PredictionLinearJson = JsonSerializer.Serialize(predictionDataLinear);
+
+        ViewBag.KpiHistoryJson = JsonSerializer.Serialize(monthlyKpi);
         return View();
     }
 }

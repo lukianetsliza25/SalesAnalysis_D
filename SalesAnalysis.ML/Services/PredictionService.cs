@@ -2,7 +2,6 @@
 using Microsoft.ML;
 using SalesAnalysis.Core.Models;
 using Microsoft.ML.Data;
-using System.Linq;
 using System.Collections.Generic;
 using System;
 
@@ -10,35 +9,65 @@ namespace SalesAnalysis.ML.Services
 {
     public class PredictionService
     {
-        // Контекст ML.NET з фіксованим seed для відтворюваності результатів
+        // Головний пульт керування штучним інтелектом (MLContext)
         public MLContext MLContext { get; } = new MLContext(seed: 0);
 
-        // Шлях до файлу збереженої моделі прогнозування
-        private const string ModelPath = "sales_prediction_model.zip";
+        // Назви двох різних файлів, які будуть створюватися на диску
+        private const string FastTreeModelPath = "sales_prediction_model.zip";
+        private const string LinearModelPath = "sales_linear_model.zip";
 
         // -----------------------------------------------------
-        // Метод навчання регресійної моделі та збереження її на диск
+        // 1. Метод навчання першої моделі (Гнучкі дерева — FastTree)
         public ITransformer TrainAndSaveModel(IDataView trainingData)
         {
             if (trainingData.GetRowCount() < 4)
-                throw new InvalidOperationException("Недостатньо точок даних для навчання.");
+                throw new InvalidOperationException("Недостатньо точок даних для навчання FastTree.");
 
+            // Конвеєр підготовки: збираємо індекс часу та місяць року разом
             var pipeline = MLContext.Transforms.Concatenate("Features",
                     nameof(SalesDataPoint.TimeIndex),
-                    nameof(SalesDataPoint.MonthOfYear)) // Додано другу ознаку
+                    nameof(SalesDataPoint.MonthOfYear))
                 .Append(MLContext.Transforms.NormalizeMinMax("Features"))
+                // Навчаємо гнучкі дерева FastTree
                 .Append(MLContext.Regression.Trainers.FastTree(
                     labelColumnName: "Label",
                     featureColumnName: "Features",
                     numberOfTrees: 100));
 
             var model = pipeline.Fit(trainingData);
-            MLContext.Model.Save(model, trainingData.Schema, ModelPath);
+
+            // Зберігаємо першу модель на диск
+            MLContext.Model.Save(model, trainingData.Schema, FastTreeModelPath);
             return model;
         }
 
-        // Оновіть також метод PredictNPeriods, щоб він вираховував правильний MonthOfYear для майбутнього
-        // Оновлений метод PredictNPeriods
+        // -----------------------------------------------------
+        // 2. Метод навчання другої моделі (Пряма лінія — Лінійна регресія)
+        public ITransformer TrainAndSaveLinearModel(IDataView trainingData)
+        {
+            if (trainingData.GetRowCount() < 4)
+                throw new InvalidOperationException("Недостатньо точок даних для навчання лінійної регресії.");
+
+            // Точно такий же конвеєр підготовки, щоб усе було чесно
+            var pipeline = MLContext.Transforms.Concatenate("Features",
+                    nameof(SalesDataPoint.TimeIndex),
+                    nameof(SalesDataPoint.MonthOfYear))
+                .Append(MLContext.Transforms.NormalizeMinMax("Features"))
+                // Навчаємо класичну лінійну регресію (алгоритм SDCA)
+                .Append(MLContext.Regression.Trainers.Sdca(
+                    labelColumnName: "Label",
+                    featureColumnName: "Features",
+                    maximumNumberOfIterations: 100));
+
+            var model = pipeline.Fit(trainingData);
+
+            // Зберігаємо другу модель на диск під іншим ім'ям
+            MLContext.Model.Save(model, trainingData.Schema, LinearModelPath);
+            return model;
+        }
+
+        // -----------------------------------------------------
+        // 3. Метод прогнозування на 12 місяців наперед (Підходить для обох моделей)
         public List<float> PredictNPeriods(ITransformer trainedModel, float startNextIndex, int periods, int lastMonth)
         {
             var results = new List<float>();
@@ -47,8 +76,6 @@ namespace SalesAnalysis.ML.Services
             for (int i = 0; i < periods; i++)
             {
                 var nextTimeIndex = startNextIndex + i;
-
-                // Розрахунок місяця року: (поточний + крок) % 12
                 var nextMonthOfYear = ((lastMonth - 1 + 1 + i) % 12) + 1;
 
                 var input = new SalesDataPoint
@@ -58,37 +85,20 @@ namespace SalesAnalysis.ML.Services
                 };
 
                 var prediction = predictionEngine.Predict(input);
-                // Додаємо результат (не менше 0)
+
+                // Округлюємо результат і страхуємося від мінусів (лінійна лінія іноді може падати нижче нуля)
                 results.Add((float)Math.Round(Math.Max(0, prediction.PredictedSales), 2));
             }
             return results;
         }
 
         // -----------------------------------------------------
-        // Метод прогнозування одного наступного періоду
-
-        public SalesPrediction Predict(
-            ITransformer trainedModel,
-            float nextTimeIndex)
+        // 4. Одиночний прогноз (для сумісності, якщо десь викликається)
+        public SalesPrediction Predict(ITransformer trainedModel, float nextTimeIndex)
         {
-            // Створення PredictionEngine для виконання прогнозу
-            var predictionEngine = MLContext.Model
-                .CreatePredictionEngine<SalesDataPoint, SalesPrediction>(
-                    trainedModel);
-
-            // Формування вхідних даних для прогнозування
-            var input = new SalesDataPoint
-            {
-                TimeIndex = nextTimeIndex,
-                MonthOfYear = 1
-            };
-
-            // Повернення прогнозного значення
+            var predictionEngine = MLContext.Model.CreatePredictionEngine<SalesDataPoint, SalesPrediction>(trainedModel);
+            var input = new SalesDataPoint { TimeIndex = nextTimeIndex, MonthOfYear = 1 };
             return predictionEngine.Predict(input);
         }
-
-        // -----------------------------------------------------
-        // Метод прогнозування продажів на N майбутніх періодів
-        
     }
 }
