@@ -120,30 +120,11 @@ namespace SalesAnalysis.Data.Services
             return result;
         }
 
-        // -----------------------------------------------------
-        // 5. Метод агрегації продажів для конкретного товару
-        public async Task<List<SalesDataPoint>> GetMonthlySalesByProductAsync(string productId, int userId)
-        {
-            var productTransactions = await _context.Transactions
-                .Where(t => t.ProductId == productId && t.UserId == userId)
-                .ToListAsync();
-
-            if (!productTransactions.Any()) return new List<SalesDataPoint>();
-
-            return productTransactions
-                .GroupBy(t => new { t.Date.Year, t.Date.Month })
-                .OrderBy(g => g.Key.Year).ThenBy(g => g.Key.Month)
-                .Select((g, index) => new SalesDataPoint
-                {
-                    TimeIndex = index + 1,
-                    MonthOfYear = (float)g.Key.Month,
-                    SalesAmount = (float)g.Sum(t => t.Revenue)
-                })
-                .ToList();
-        }
+        
 
         // -----------------------------------------------------
         // 6. Метод обчислення розширених місячних KPI
+        // 6. Метод обчислення розширених місячних KPI (Тепер узгоджений з графіком!)
         public async Task<List<MonthlyKpiData>> GetMonthlyKpiDataAsync(int userId)
         {
             var all = await _context.Transactions
@@ -152,27 +133,45 @@ namespace SalesAnalysis.Data.Services
 
             if (!all.Any()) return new List<MonthlyKpiData>();
 
+            var maxDate = all.Max(t => t.Date);
+            int daysInMaxMonth = DateTime.DaysInMonth(maxDate.Year, maxDate.Month);
+
             var grouped = all
                 .GroupBy(t => new { t.Date.Year, t.Date.Month })
                 .OrderBy(g => g.Key.Year).ThenBy(g => g.Key.Month)
-                .Select(g => new MonthlyKpiData
+                .ToList();
+
+            var filteredGrouped = new List<MonthlyKpiData>();
+
+            foreach (var g in grouped)
+            {
+                // Умова фільтрації неповного місяця, ідентична до графіка
+                bool isLastMonthInDataset = (g.Key.Year == maxDate.Year && g.Key.Month == maxDate.Month);
+                bool isCurrentCalendarMonth = (g.Key.Year == DateTime.UtcNow.Year && g.Key.Month == DateTime.UtcNow.Month);
+
+                if (isLastMonthInDataset && (maxDate.Day < (daysInMaxMonth - 2) || isCurrentCalendarMonth))
+                {
+                    continue; // Пропускаємо цей місяць в історії KPI
+                }
+
+                filteredGrouped.Add(new MonthlyKpiData
                 {
                     MonthIndex = $"{g.Key.Year}-{g.Key.Month:D2}",
                     TotalRevenue = (float)g.Sum(x => x.Revenue),
                     TotalTransactions = g.Count(),
                     UniqueCustomers = g.Select(x => x.CustomerId).Distinct().Count()
-                })
-                .ToList();
+                });
+            }
 
-            // Розрахунок похідних метрик
-            foreach (var m in grouped)
+            // Розрахунок похідних метрик для відфільтрованих повних місяців
+            foreach (var m in filteredGrouped)
             {
                 m.AverageOrderValue = m.TotalTransactions > 0 ? m.TotalRevenue / m.TotalTransactions : 0;
                 m.CustomerSpend = m.UniqueCustomers > 0 ? m.TotalRevenue / m.UniqueCustomers : 0;
                 m.Frequency = m.UniqueCustomers > 0 ? (float)m.TotalTransactions / m.UniqueCustomers : 0;
             }
 
-            return grouped;
+            return filteredGrouped;
         }
 
         // -----------------------------------------------------
