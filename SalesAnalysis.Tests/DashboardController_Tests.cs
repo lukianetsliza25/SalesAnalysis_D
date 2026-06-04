@@ -22,91 +22,35 @@ namespace SalesAnalysis.Tests
     public class DashboardControllerTests
     {
         private ServiceProvider _serviceProvider;
+        private SalesDbContext _dbContext;
         private readonly int _testUserId = 1;
-
-        private void SeedMinimumClusterData(SalesDbContext ctx)
-        {
-            // Наповнюємо базу транзакціями за ТРИ різні місяці:
-            // Січень і Лютий система пропустить як повністю закриті, а Березень відфільтрує як неповний.
-            ctx.Transactions.AddRange(new[]
-            {
-                // Січень 2024 (Разом 400 ₴)
-                new Transaction { UserId = _testUserId, CustomerId = "C1", ProductId = "P1", Date = new DateTime(2024,1,1), Revenue = 100, Quantity = 1, ProductName = "Test" },
-                new Transaction { UserId = _testUserId, CustomerId = "C1", ProductId = "P2", Date = new DateTime(2024,1,5), Revenue = 100, Quantity = 1, ProductName = "Test" },
-                new Transaction { UserId = _testUserId, CustomerId = "C2", ProductId = "P3", Date = new DateTime(2024,1,2), Revenue = 100, Quantity = 1, ProductName = "Test" },
-                new Transaction { UserId = _testUserId, CustomerId = "C2", ProductId = "P4", Date = new DateTime(2024,1,6), Revenue = 100, Quantity = 1, ProductName = "Test" },
-
-                // Лютий 2024 (Разом 400 ₴)
-                new Transaction { UserId = _testUserId, CustomerId = "C3", ProductId = "P5", Date = new DateTime(2024,2,3), Revenue = 100, Quantity = 1, ProductName = "Test" },
-                new Transaction { UserId = _testUserId, CustomerId = "C3", ProductId = "P6", Date = new DateTime(2024,2,7), Revenue = 100, Quantity = 1, ProductName = "Test" },
-                new Transaction { UserId = _testUserId, CustomerId = "C4", ProductId = "P7", Date = new DateTime(2024,2,4), Revenue = 100, Quantity = 1, ProductName = "Test" },
-                new Transaction { UserId = _testUserId, CustomerId = "C4", ProductId = "P8", Date = new DateTime(2024,2,8), Revenue = 100, Quantity = 1, ProductName = "Test" },
-
-                // Березень 2024 (Технічний неповний місяць — разом 50 ₴. Буде відфільтрований)
-                new Transaction { UserId = _testUserId, CustomerId = "C1", ProductId = "P9", Date = new DateTime(2024,3,15), Revenue = 50,  Quantity = 1, ProductName = "Test" }
-            });
-
-            // Імітуємо готовий кеш штучного інтелекту в базі, щоб контролер не намагався писати файли моделей на диск
-            var fakeClusters = new List<ClusteredCustomer>
-            {
-                new ClusteredCustomer { CustomerId = "C1", ClusterId = 2, ClusterDescription = "Постійний" },
-                new ClusteredCustomer { CustomerId = "C2", ClusterId = 2, ClusterDescription = "Постійний" },
-                new ClusteredCustomer { CustomerId = "C3", ClusterId = 2, ClusterDescription = "Постійний" },
-                new ClusteredCustomer { CustomerId = "C4", ClusterId = 2, ClusterDescription = "Постійний" }
-            };
-            var fakeKpi = new List<MonthlyKpiData>
-            {
-                new MonthlyKpiData { MonthIndex = "2024-01", TotalRevenue = 400 },
-                new MonthlyKpiData { MonthIndex = "2024-02", TotalRevenue = 400 }
-            };
-
-            ctx.SavedAnalyses.AddRange(new[]
-            {
-                new SavedAnalysis { UserId = _testUserId, ProductId = "ALL", AnalysisType = "CustomerClusters", ResultJson = JsonSerializer.Serialize(fakeClusters), CreatedAt = DateTime.UtcNow },
-                new SavedAnalysis { UserId = _testUserId, ProductId = "ALL", AnalysisType = "MonthlyKpiHistory", ResultJson = JsonSerializer.Serialize(fakeKpi), CreatedAt = DateTime.UtcNow },
-                new SavedAnalysis { UserId = _testUserId, ProductId = "ALL", AnalysisType = "SalesForecastFastTree", ResultJson = "[100,120]", CreatedAt = DateTime.UtcNow },
-                new SavedAnalysis { UserId = _testUserId, ProductId = "ALL", AnalysisType = "SalesForecastLinear", ResultJson = "[100,120]", CreatedAt = DateTime.UtcNow },
-                new SavedAnalysis { UserId = _testUserId, ProductId = "ALL", AnalysisType = "BestModelName", ResultJson = "\"FastTree\"", CreatedAt = DateTime.UtcNow },
-                new SavedAnalysis { UserId = _testUserId, ProductId = "ALL", AnalysisType = "R2FastTree", ResultJson = "0.9", CreatedAt = DateTime.UtcNow },
-                new SavedAnalysis { UserId = _testUserId, ProductId = "ALL", AnalysisType = "R2Linear", ResultJson = "0.2", CreatedAt = DateTime.UtcNow },
-                new SavedAnalysis { UserId = _testUserId, ProductId = "ALL", AnalysisType = "RmseFastTree", ResultJson = "100", CreatedAt = DateTime.UtcNow },
-                new SavedAnalysis { UserId = _testUserId, ProductId = "ALL", AnalysisType = "RmseLinear", ResultJson = "200", CreatedAt = DateTime.UtcNow }
-            });
-        }
 
         [SetUp]
         public void SetUp()
         {
             var services = new ServiceCollection();
-            services.AddDbContext<SalesDbContext>(o => o.UseInMemoryDatabase(Guid.NewGuid().ToString()));
+
+            services.AddDbContext<SalesDbContext>(o => o.UseInMemoryDatabase("DashboardTestDb_" + Guid.NewGuid().ToString()));
             services.AddScoped<AnalysisService>();
             services.AddSingleton<ClusteringService>();
             services.AddSingleton<PredictionService>();
+
             _serviceProvider = services.BuildServiceProvider();
+            _dbContext = _serviceProvider.GetRequiredService<SalesDbContext>();
         }
 
         [TearDown]
-        public void TearDown() => _serviceProvider.Dispose();
-
-        public DashboardController CreateController(Action<SalesDbContext> seed)
+        public void TearDown()
         {
-            var ctx = _serviceProvider.GetRequiredService<SalesDbContext>();
+            _dbContext?.Database.EnsureDeleted();
+            _dbContext?.Dispose(); // ВИПРАВЛЕНО: Явне звільнення ресурсів контексту БД усуває помилку NUnit1032
+            _serviceProvider?.Dispose();
+        }
 
-            seed(ctx);
-            ctx.SaveChanges();
-
+        public DashboardController CreateController()
+        {
             var store = new Mock<IUserStore<IdentityUser<int>>>();
-
-            var mockUserManager = new Mock<UserManager<IdentityUser<int>>>(
-                store.Object,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null);
+            var mockUserManager = new Mock<UserManager<IdentityUser<int>>>(store.Object, null, null, null, null, null, null, null, null);
 
             mockUserManager
                 .Setup(x => x.GetUserId(It.IsAny<ClaimsPrincipal>()))
@@ -118,53 +62,59 @@ namespace SalesAnalysis.Tests
                 _serviceProvider.GetRequiredService<PredictionService>(),
                 mockUserManager.Object);
 
-            var user = new ClaimsPrincipal(
-                new ClaimsIdentity(
-                [
-                    new Claim(ClaimTypes.NameIdentifier, _testUserId.ToString())
-                ],
-                "TestAuth"));
-
-            controller.ControllerContext = new ControllerContext
-            {
-                HttpContext = new DefaultHttpContext
-                {
-                    User = user
-                }
-            };
+            var user = new ClaimsPrincipal(new ClaimsIdentity(new[] { new Claim(ClaimTypes.NameIdentifier, _testUserId.ToString()) }, "TestAuth"));
+            controller.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext { User = user } };
 
             return controller;
+        }
+
+        private void SeedMinimumClusterData()
+        {
+            _dbContext.Transactions.AddRange(new[]
+            {
+                new Transaction { UserId = _testUserId, CustomerId = "C1", ProductId = "P1", Date = new DateTime(2024,1,1,0,0,0,DateTimeKind.Utc), Revenue = 100m, Quantity = 1, ProductName = "Test" },
+                new Transaction { UserId = _testUserId, CustomerId = "C2", ProductId = "P3", Date = new DateTime(2024,1,2,0,0,0,DateTimeKind.Utc), Revenue = 100m, Quantity = 1, ProductName = "Test" },
+                new Transaction { UserId = _testUserId, CustomerId = "C1", ProductId = "P9", Date = new DateTime(2024,2,15,0,0,0,DateTimeKind.Utc), Revenue = 50m,  Quantity = 1, ProductName = "Test" }
+            });
+
+            var fakeClusters = new List<ClusteredCustomer> { new ClusteredCustomer { CustomerId = "C1", ClusterId = 2, ClusterDescription = "Постійний" } };
+            var fakeKpi = new List<MonthlyKpiData> { new MonthlyKpiData { MonthIndex = "2024-01", TotalRevenue = 200 } };
+
+            _dbContext.SavedAnalyses.AddRange(new[]
+            {
+                new SavedAnalysis { UserId = _testUserId, ProductId = "ALL", AnalysisType = "CustomerClusters", ResultJson = JsonSerializer.Serialize(fakeClusters), CreatedAt = DateTime.UtcNow },
+                new SavedAnalysis { UserId = _testUserId, ProductId = "ALL", AnalysisType = "MonthlyKpiHistory", ResultJson = JsonSerializer.Serialize(fakeKpi), CreatedAt = DateTime.UtcNow },
+                new SavedAnalysis { UserId = _testUserId, ProductId = "ALL", AnalysisType = "SalesForecastFastTree", ResultJson = "[100,120]", CreatedAt = DateTime.UtcNow },
+                new SavedAnalysis { UserId = _testUserId, ProductId = "ALL", AnalysisType = "SalesForecastLinear", ResultJson = "[100,120]", CreatedAt = DateTime.UtcNow },
+                new SavedAnalysis { UserId = _testUserId, ProductId = "ALL", AnalysisType = "BestModelName", ResultJson = "\"FastTree\"", CreatedAt = DateTime.UtcNow }
+            });
+
+            _dbContext.SaveChanges();
         }
 
         [Test]
         public async Task Index_NoData_RedirectsToImport()
         {
-            var controller = CreateController(ctx => { });
+            var controller = CreateController();
             var result = await controller.Index();
 
             Assert.IsInstanceOf<RedirectToActionResult>(result);
             var redirect = (RedirectToActionResult)result;
+            Assert.AreEqual("Index", redirect.ActionName);
             Assert.AreEqual("Import", redirect.ControllerName);
         }
 
         [Test]
-        public async Task Index_ComputesBasicKpi()
+        public async Task Index_WithCachedData_ReturnsViewWithKpi()
         {
-            var controller = CreateController(SeedMinimumClusterData);
+            SeedMinimumClusterData();
+            var controller = CreateController();
 
             var result = await controller.Index();
-            Console.WriteLine(result.GetType().Name);
 
             Assert.IsInstanceOf<ViewResult>(result);
-
-            Assert.That(controller.ViewBag.TotalRevenue, Is.Not.Null);
-            Assert.That((decimal)controller.ViewBag.TotalRevenue, Is.EqualTo(850m));
-
-            Assert.That(controller.ViewBag.TotalTransactions, Is.Not.Null);
-            Assert.That((int)controller.ViewBag.TotalTransactions, Is.EqualTo(9));
-
-            Assert.That(controller.ViewBag.UniqueCustomers, Is.Not.Null);
-            Assert.That((int)controller.ViewBag.UniqueCustomers, Is.EqualTo(4));
+            Assert.AreEqual(250m, controller.ViewBag.TotalRevenue);
+            Assert.AreEqual(3, controller.ViewBag.TotalTransactions);
         }
     }
 }

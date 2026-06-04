@@ -19,17 +19,15 @@ namespace SalesAnalysis.Tests
         [Test]
         public void Model_Trains_OnValidData()
         {
-            // Створюємо тестових клієнтів за допомогою актуального класу CustomerData
             var data = new List<CustomerData>
             {
-                new CustomerData { CustomerId = "C1", TotalSpent = 100, PurchaseFrequency = 2, DaysSinceLastPurchase = 10 },
-                new CustomerData { CustomerId = "C2", TotalSpent = 200, PurchaseFrequency = 3, DaysSinceLastPurchase = 20 },
-                new CustomerData { CustomerId = "C3", TotalSpent = 300, PurchaseFrequency = 4, DaysSinceLastPurchase = 5 }
+                new CustomerData { CustomerId = "C1", TotalSpent = 100f, PurchaseFrequency = 2f, DaysSinceLastPurchase = 10f },
+                new CustomerData { CustomerId = "C2", TotalSpent = 200f, PurchaseFrequency = 3f, DaysSinceLastPurchase = 20f },
+                new CustomerData { CustomerId = "C3", TotalSpent = 300f, PurchaseFrequency = 4f, DaysSinceLastPurchase = 5f }
             };
 
             var dv = _service.MLContext.Data.LoadFromEnumerable(data);
 
-            // Перевіряємо, що конвеєр логарифмування та навчання K-Means працює стабільно
             Assert.DoesNotThrow(() => _service.TrainAndSaveModel(dv));
         }
 
@@ -38,16 +36,20 @@ namespace SalesAnalysis.Tests
         {
             var customers = new List<CustomerData>
             {
-                new CustomerData { TotalSpent = 100, PurchaseFrequency = 2, DaysSinceLastPurchase = 10 },
-                new CustomerData { TotalSpent = 105, PurchaseFrequency = 2, DaysSinceLastPurchase = 11 },
-                new CustomerData { TotalSpent = 500, PurchaseFrequency = 6, DaysSinceLastPurchase = 3 }
+                new CustomerData { CustomerId = "1", TotalSpent = 100f, PurchaseFrequency = 2f, DaysSinceLastPurchase = 10f },
+                new CustomerData { CustomerId = "2", TotalSpent = 105f, PurchaseFrequency = 2f, DaysSinceLastPurchase = 11f },
+                new CustomerData { CustomerId = "3", TotalSpent = 500f, PurchaseFrequency = 6f, DaysSinceLastPurchase = 3f }
             };
 
-            var model = _service.TrainAndSaveModel(_service.MLContext.Data.LoadFromEnumerable(customers));
+            var dataView = _service.MLContext.Data.LoadFromEnumerable(customers);
+            var model = _service.TrainAndSaveModel(dataView);
             var prediction = _service.Predict(model, customers[0]);
 
-            // Перевіряємо, що ШІ видає адекватний номер купи (від 1 до 3 кластера)
-            Assert.That(prediction.PredictedClusterId, Is.InRange(1u, 3u));
+            // ВИПРАВЛЕНО: Індексація кластерів у ML.NET KMeans починається з 0u. 
+            // Для 3-х кластерів валідними є значення 0, 1, 2.
+            Assert.That(prediction.PredictedClusterId, Is.InRange(0u, 2u));
+            Assert.IsNotNull(prediction.Distances);
+            Assert.AreEqual(3, prediction.Distances.Length); // Перевіряємо, що масив відстаней відповідає кількості центроїдів
         }
     }
 }
