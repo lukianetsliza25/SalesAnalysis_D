@@ -1,21 +1,19 @@
 // SalesAnalysis.Web/Program.cs (Фрагмент конфігурації)
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
 using SalesAnalysis.Data;
 using SalesAnalysis.Data.Services;
 using SalesAnalysis.ML.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// --- 1. Налаштування підключення до бази даних (PostgreSQL) ---
+// 1. Налаштування підключення до бази даних (PostgreSQL)
 builder.Services.AddDbContext<SalesDbContext>(options =>
 {
     options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection"));
 });
 
-// --- 2. Налаштування Identity для авторизації ---
+// 2. Налаштування Identity для авторизації користувачів (ізоляція даних за UserId)
 builder.Services.AddIdentity<IdentityUser<int>, IdentityRole<int>>(options => {
     options.Password.RequireDigit = false;
     options.Password.RequiredLength = 6;
@@ -29,7 +27,7 @@ builder.Services.ConfigureApplicationCookie(options => {
     options.LogoutPath = "/Account/Auth";
 });
 
-// --- 3. Реєстрація Сервісів (Dependency Injection) ---
+// 3. Реєстрація Сервісів інтелектуального ядра (Dependency Injection)
 builder.Services.AddScoped<ImportService>();
 builder.Services.AddScoped<AnalysisService>();
 builder.Services.AddSingleton<ClusteringService>();
@@ -37,26 +35,21 @@ builder.Services.AddSingleton<PredictionService>();
 
 builder.Services.AddControllersWithViews();
 
-// --- 4. Налаштування лімітів завантаження великих CSV-файлів (до 100 МБ) ---
-builder.Services.Configure<Microsoft.AspNetCore.Http.Features.FormOptions>(options =>
-{
-    options.MultipartBodyLengthLimit = 104857600; // 100 MB
-});
-
+// 4. Оптимізація вебсервера Kestrel під завантаження великих транзакційних CSV-масивів
 builder.WebHost.ConfigureKestrel(options =>
 {
-    options.Limits.MaxRequestBodySize = 100_000_000;
+    options.Limits.MaxRequestBodySize = 104857600; // Строго 100 МБ на рівні HTTP-сервера
 });
 
-// Сумісність точок часу DateTime для PostgreSQL
+// Забезпечення сумісності форматів дат DateTime із вимогами СКБД PostgreSQL
 AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
 
 var app = builder.Build();
 
-// Гарантоване створення/міграція БД при старті
+// Автоматичний запуск міграцій та створення бази даних SalesAnalysisDb при старті
 CreateDbIfNotExists(app);
 
-// --- 5. Конвеєр обробки запитів (Middleware) ---
+// 5. Конвеєр обробки запитів (Middleware)
 if (!app.Environment.IsDevelopment())
 {
     app.UseExceptionHandler("/Home/Error");
@@ -69,14 +62,14 @@ app.UseRouting();
 app.UseAuthentication();
 app.UseAuthorization();
 
-// Стартовий маршрут веде на сторінку авторизації
+// Стартовий маршрут системи (веде на сторінку авторизації)
 app.MapControllerRoute(
     name: "default",
     pattern: "{controller=Account}/{action=Auth}/{id?}");
 
 app.Run();
 
-// --- ДОПОМІЖНИЙ МЕТОД ДЛЯ АВТОМІГРАЦІЇ ---
+// Допоміжний метод для автоматичного розгортання структури БД в PostgreSQL
 void CreateDbIfNotExists(IHost host)
 {
     using (var scope = host.Services.CreateScope())
@@ -85,12 +78,12 @@ void CreateDbIfNotExists(IHost host)
         try
         {
             var context = services.GetRequiredService<SalesDbContext>();
-            context.Database.Migrate(); // Автоматично створить базу SalesAnalysisDb в Postgres
+            context.Database.Migrate();
         }
         catch (Exception ex)
         {
             var logger = services.GetRequiredService<ILogger<Program>>();
-            logger.LogError(ex, "An error occurred creating or migrating the DB.");
+            logger.LogError(ex, "Помилка автоматичного розгортання міграцій СКБД PostgreSQL.");
         }
     }
 }

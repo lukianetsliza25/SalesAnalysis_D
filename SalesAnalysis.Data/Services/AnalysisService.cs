@@ -63,9 +63,12 @@ namespace SalesAnalysis.Data.Services
                 .Select(g => new CustomerData
                 {
                     CustomerId = g.Key,
-                    TotalSpent = (float)g.Sum(t => t.Revenue), // Monetary: сума витрат клієнта
-                    PurchaseFrequency = g.Count(),             // Frequency: кількість покупок клієнта
-                    DaysSinceLastPurchase = (float)(today - g.Max(t => t.Date)).TotalDays // Recency: давність останньої покупки
+                    // Monetary: сума витрат клієнта
+                    TotalSpent = (float)g.Sum(t => t.Revenue), 
+                    // Frequency: кількість покупок клієнта
+                    PurchaseFrequency = g.Count(),             
+                    // Recency: давність останньої покупки
+                    DaysSinceLastPurchase = (float)(today - g.Max(t => t.Date)).TotalDays
                 })
                 .ToList();
         }
@@ -98,11 +101,19 @@ namespace SalesAnalysis.Data.Services
             foreach (var g in groupedMonths)
             {
                 // 3. ФІЛЬТРАЦІЯ: Перевірка логічних маркерів неповного календарного періоду
-                bool isLastMonthInDataset = (g.Key.Year == maxDate.Year && g.Key.Month == maxDate.Month);
-                bool isCurrentCalendarMonth = (g.Key.Year == DateTime.UtcNow.Year && g.Key.Month == DateTime.UtcNow.Month);
+                bool isLastMonthInDataset = (
+                    g.Key.Year == maxDate.Year && 
+                    g.Key.Month == maxDate.Month
+                    );
+                bool isCurrentCalendarMonth = (
+                    g.Key.Year == DateTime.UtcNow.Year &&
+                    g.Key.Month == DateTime.UtcNow.Month
+                    );
 
-                // Якщо останній місяць вибірки не закритий (менше 25-26 днів), пропускаємо його задля точності прогнозу
-                if (isLastMonthInDataset && (maxDate.Day < (daysInMaxMonth - 2) || isCurrentCalendarMonth))
+                // Якщо останній місяць вибірки не закритий (менше 25-26 днів),
+                // пропускаємо його задля точності прогнозу
+                if (isLastMonthInDataset && (maxDate.Day < (daysInMaxMonth - 2) 
+                    || isCurrentCalendarMonth))
                 {
                     continue; // Пропускаємо цей неповний місяць
                 }
@@ -110,9 +121,12 @@ namespace SalesAnalysis.Data.Services
                 // Додавання сформованої точки часового ряду до фінального списку
                 result.Add(new SalesDataPoint
                 {
-                    TimeIndex = index++,              // Часовий крок періоду (ознака лінійного тренду)
-                    MonthOfYear = (float)g.Key.Month, // Календарний номер місяця (ознака сезонності)
-                    SalesAmount = (float)g.Sum(t => t.Revenue) // Загальна сума виторгу (цільова мітка Label)
+                    // Часовий крок періоду (ознака лінійного тренду)
+                    TimeIndex = index++,
+                    // Календарний номер місяця (ознака сезонності)
+                    MonthOfYear = (float)g.Key.Month,
+                    // Загальна сума виторгу (цільова мітка Label)
+                    SalesAmount = (float)g.Sum(t => t.Revenue)
                 });
             }
 
@@ -142,10 +156,17 @@ namespace SalesAnalysis.Data.Services
             foreach (var g in grouped)
             {
                 // Умова фільтрації неповного місяця, ідентична до графіка
-                bool isLastMonthInDataset = (g.Key.Year == maxDate.Year && g.Key.Month == maxDate.Month);
-                bool isCurrentCalendarMonth = (g.Key.Year == DateTime.UtcNow.Year && g.Key.Month == DateTime.UtcNow.Month);
+                bool isLastMonthInDataset = (
+                    g.Key.Year == maxDate.Year 
+                    && g.Key.Month == maxDate.Month
+                    );
+                bool isCurrentCalendarMonth = (
+                    g.Key.Year == DateTime.UtcNow.Year 
+                    && g.Key.Month == DateTime.UtcNow.Month
+                    );
 
-                if (isLastMonthInDataset && (maxDate.Day < (daysInMaxMonth - 2) || isCurrentCalendarMonth))
+                if (isLastMonthInDataset && (maxDate.Day < (daysInMaxMonth - 2) 
+                    || isCurrentCalendarMonth))
                 {
                     continue; // Пропускаємо цей місяць в історії KPI
                 }

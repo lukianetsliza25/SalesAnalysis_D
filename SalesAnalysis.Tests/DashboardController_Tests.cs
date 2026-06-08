@@ -93,27 +93,42 @@ namespace SalesAnalysis.Tests
         }
 
         [Test]
+        //
         public async Task Index_NoData_RedirectsToImport()
         {
+            // Не додаємо жодних транзакцій, щоб імітувати відсутність даних
             var controller = CreateController();
+            // Викликаємо метод Index і очікуємо перенаправлення на Import
             var result = await controller.Index();
 
+            // Перевіряємо, що результат є перенаправленням на дію Import
             Assert.IsInstanceOf<RedirectToActionResult>(result);
             var redirect = (RedirectToActionResult)result;
+
+            // Перевіряємо, що перенаправлення спрямоване на правильну дію та контролер
             Assert.AreEqual("Index", redirect.ActionName);
+            // Враховуючи, що Import знаходиться в тому ж контролері,
+            // перевіряємо лише назву контролера
             Assert.AreEqual("Import", redirect.ControllerName);
         }
 
         [Test]
+        //
         public async Task Index_WithCachedData_ReturnsViewWithKpi()
         {
+            // Наповнюємо базу мінімальними даними для успішного
+            // виконання кластеризації та KPI аналізу
             SeedMinimumClusterData();
             var controller = CreateController();
 
+            // Викликаємо метод Index і очікуємо повернення представлення з KPI даними
             var result = await controller.Index();
 
+            // Перевіряємо, що результат є представленням і що KPI дані передані у ViewBag
             Assert.IsInstanceOf<ViewResult>(result);
+            // Враховуючи, що ми зберегли один місяць з загальним доходом 200, перевіряємо ці значення
             Assert.AreEqual(250m, controller.ViewBag.TotalRevenue);
+            // Ми зберегли 3 транзакції, тому очікуємо, що загальна кількість транзакцій буде 3
             Assert.AreEqual(3, controller.ViewBag.TotalTransactions);
         }
     }

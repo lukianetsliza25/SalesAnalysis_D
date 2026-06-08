@@ -56,9 +56,9 @@ namespace SalesAnalysis.Tests
         [Test]
         public async Task TotalRevenue_IsCalculatedCorrectly()
         {
-            // Передаємо у сервіс той самий контекст, в який щойно записали сідові дані
             var service = new AnalysisService(_context);
 
+            // Перевірка правильності обчислення загального доходу
             var result = await service.GetTotalRevenueAsync(1);
             Assert.AreEqual(350.00m, result);
         }
@@ -68,11 +68,13 @@ namespace SalesAnalysis.Tests
         {
             var service = new AnalysisService(_context);
 
+            // Отримання агрегованих даних за місяцями
             var data = await service.GetMonthlySalesDataAsync(1);
 
+            // Перевірка виключення неповного місяця з результатів
             Assert.AreEqual(1, data.Count);
             Assert.AreEqual(300f, data[0].SalesAmount);
-            Assert.AreEqual(1f, data[0].MonthOfYear); // Перевіряємо, що залишився саме Січень
+            Assert.AreEqual(1f, data[0].MonthOfYear);
         }
 
         [Test]
@@ -80,18 +82,20 @@ namespace SalesAnalysis.Tests
         {
             var service = new AnalysisService(_context);
 
+            // Розрахунок RFM-показників клієнтів
             var rfm = await service.GetCustomerClusteringDataAsync(1);
 
             Assert.AreEqual(2, rfm.Count);
 
-            // Глибока перевірка математики RFM-метрик для клієнта C1
             var customerC1 = rfm.FirstOrDefault(c => c.CustomerId == "C1");
-            Assert.IsNotNull(customerC1);
-            Assert.AreEqual(150.00f, customerC1.TotalSpent); // 100 + 50
-            Assert.AreEqual(2, customerC1.PurchaseFrequency);  // 2 покупки
 
-            // Останній запис у всьому датасеті: 2024-02-10. today = 2024-02-11.
-            // Остання покупка C1: 2024-02-10. DaysSinceLastPurchase = 2024-02-11 - 2024-02-10 = 1 день.
+            // Перевірка показників для клієнта C1
+            Assert.IsNotNull(customerC1);
+            // Перевірка загальної суми витрат
+            Assert.AreEqual(150.00f, customerC1.TotalSpent);
+            // Перевірка кількості покупок
+            Assert.AreEqual(2, customerC1.PurchaseFrequency);
+            // Перевірка показника давності останньої покупки
             Assert.AreEqual(1.0f, customerC1.DaysSinceLastPurchase);
         }
     }
