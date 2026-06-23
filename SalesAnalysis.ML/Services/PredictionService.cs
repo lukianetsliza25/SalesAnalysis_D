@@ -21,7 +21,8 @@ namespace SalesAnalysis.ML.Services
         {
             // Алгоритм FastTree потребує мінімум 4 крапки часового ряду
             if (trainingData.GetRowCount() < 4)
-                throw new InvalidOperationException("Недостатньо точок даних для навчання FastTree.");
+                throw new InvalidOperationException(
+                    "Недостатньо точок даних для навчання FastTree.");
 
             // Конкатенація індексу часу та номеру місяця у вектор Features
             var pipeline = MLContext.Transforms.Concatenate("Features",
@@ -29,7 +30,7 @@ namespace SalesAnalysis.ML.Services
                     nameof(SalesDataPoint.MonthOfYear))
                 // Лінійна нормалізація Min-Max для приведення вхідних ознак до масштабу [0, 1]
                 .Append(MLContext.Transforms.NormalizeMinMax("Features"))
-                // Навчання ансамблю з 100 регресійних дерев рішення за алгоритмом градієнтного бустингу
+                // Навчання 100 регресійних дерев рішення за алгоритмом градієнтного бустингу
                 .Append(MLContext.Regression.Trainers.FastTree(
                     labelColumnName: "Label",
                     featureColumnName: "Features",
@@ -48,21 +49,22 @@ namespace SalesAnalysis.ML.Services
         {
             // лінійний регресор потребує мінімум 4 крапки часового ряду
             if (trainingData.GetRowCount() < 4)
-                throw new InvalidOperationException("Недостатньо точок даних для навчання лінійної регресії.");
+                throw new InvalidOperationException(
+                    "Недостатньо точок даних для навчання лінійної регресії.");
 
-            // Побудова ідентичного конвеєра ознак для забезпечення чесного змагання моделей
+            // Побудова ідентичного конвеєра ознак
             var pipeline = MLContext.Transforms.Concatenate("Features",
                     nameof(SalesDataPoint.TimeIndex),
                     nameof(SalesDataPoint.MonthOfYear))
-                // Нормалізація вхідних факторів для стабілізації обчислення вагових коефіцієнтів
+                // Нормалізація вхідних факторів
                 .Append(MLContext.Transforms.NormalizeMinMax("Features"))
-                // Навчання лінійної регресії за алгоритмом стохастичного дуального координатного підйому (SDCA)
+                // Навчання лінійної регресії (SDCA)
                 .Append(MLContext.Regression.Trainers.Sdca(
                     labelColumnName: "Label",
                     featureColumnName: "Features",
                     maximumNumberOfIterations: 100));
 
-            // Обчислення оптимальних параметрів лінійної функції на історичних даних
+            // Обчислення параметрів лінійної функції на історичних даних
             var model = pipeline.Fit(trainingData);
 
             // Збереження навченої лінійної моделі у файл під окремим ім'ям

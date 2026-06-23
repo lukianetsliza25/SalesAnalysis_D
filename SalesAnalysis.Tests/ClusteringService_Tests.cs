@@ -1,4 +1,5 @@
-﻿using NUnit.Framework;
+﻿// SalesAnalysis.Tests/ClusteringService_Tests.cs
+using NUnit.Framework;
 using SalesAnalysis.ML.Services;
 using SalesAnalysis.Core.Models;
 using System.Collections.Generic;

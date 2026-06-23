@@ -174,10 +174,14 @@ namespace SalesAnalysis.Data.Services
                 // Збір базових показників за повний календарний місяць
                 filteredGrouped.Add(new MonthlyKpiData
                 {
-                    MonthIndex = $"{g.Key.Year}-{g.Key.Month:D2}", // Рядковий індекс періоду (напр. "2024-01")
-                    TotalRevenue = (float)g.Sum(x => x.Revenue),   // Сумарний виторг
-                    TotalTransactions = g.Count(),                 // Кількість чеків
-                    UniqueCustomers = g.Select(x => x.CustomerId).Distinct().Count() // Кількість унікальних покупців
+                    // Форматування рядка для зручного відображення у вигляді "YYYY-MM"
+                    MonthIndex = $"{g.Key.Year}-{g.Key.Month:D2}",
+                    // Сумарний дохід за місяць
+                    TotalRevenue = (float)g.Sum(x => x.Revenue),
+                    // Кількість транзакцій (чеків) за місяць
+                    TotalTransactions = g.Count(),
+                    // Кількість унікальних покупців за місяць
+                    UniqueCustomers = g.Select(x => x.CustomerId).Distinct().Count()
                 });
             }
 

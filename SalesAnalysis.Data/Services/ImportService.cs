@@ -23,7 +23,7 @@ namespace SalesAnalysis.Data.Services
         {
             _serviceProvider = serviceProvider;
         }
-
+        // Метод імпорту транзакцій з CSV-файлу, який тепер приймає додатковий параметр userId для прив'язки даних до конкретного користувача
         public async Task<int> ImportTransactionsFromCsvAsync(Stream fileStream, int userId) // Додали userId
         {
             // Створення ізольованого Scope для безпечного керування життєвим циклом контексту БД
@@ -70,7 +70,7 @@ namespace SalesAnalysis.Data.Services
                 }
             }
         }
-
+        // Метод для швидкого очищення попередніх даних користувача перед імпортом нових транзакцій
         public async Task ClearPreviousDataAsync(int userId)
         {
             // Створення окремого Scope для виконання операцій швидкого очищення сховища
@@ -94,7 +94,6 @@ namespace SalesAnalysis.Data.Services
         }
     }
 
-    // -----------------------------------------------------
     // Конвертер для автоматичного розрахунку доходу (Revenue)
     // Revenue = Quantity × UnitPrice
     // Використовується під час імпорту CSV-файлу
@@ -123,8 +122,7 @@ namespace SalesAnalysis.Data.Services
                 return quantity * unitPrice;
             }
 
-            // Якщо парсинг не вдався — повертаємо 0,
-            // що запобігає аварійному завершенню імпорту
+            // Якщо парсинг не вдався — повертаємо 0
             return 0m;
         }
     }

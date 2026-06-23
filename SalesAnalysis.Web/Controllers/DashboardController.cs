@@ -143,37 +143,80 @@ public class DashboardController : Controller
                 ViewBag.WorstMonthName = $"Місяць #{worst.TimeIndex}";
             }
 
-            // Кластеризація K-Means
+            // Виконання кластеризації лише за наявності підготовлених даних
             if (allData.Any())
             {
                 try
                 {
+                    // Перетворення колекції клієнтів у формат IDataView для подальшої роботи ML.NET
                     var clusteringDataView = _clusteringService.MLContext.Data.LoadFromEnumerable(allData);
-                    var clusterModel = _clusteringService.TrainAndSaveModel(clusteringDataView);
-                    var predictions = allData.Select(c => new { Data = c, Pred = _clusteringService.Predict(clusterModel, c) }).ToList();
 
+                    // Навчання моделі K-Means та отримання навченого кластеризатора
+                    var clusterModel = _clusteringService.TrainAndSaveModel(clusteringDataView);
+
+                    // Отримання прогнозованого кластера для кожного клієнта
+                    var predictions = allData
+                        .Select(c => new
+                        {
+                            Data = c,
+                            Pred = _clusteringService.Predict(clusterModel, c)
+                        })
+                        .ToList();
+
+                    // Обчислення середнього обсягу витрат для кожного кластера
+                    // з метою подальшого логічного ранжування сегментів
                     var clusterProfiles = predictions
                         .GroupBy(p => p.Pred.PredictedClusterId)
-                        .Select(g => new { ClusterId = g.Key, AvgSpent = g.Average(x => x.Data.TotalSpent) })
-                        .OrderByDescending(x => x.AvgSpent).ToList();
+                        .Select(g => new
+                        {
+                            ClusterId = g.Key,
+                            AvgSpent = g.Average(x => x.Data.TotalSpent)
+                        })
+                        .OrderByDescending(x => x.AvgSpent)
+                        .ToList();
 
+                    // Визначення кластерів із найбільшим та найменшим середнім доходом
                     uint vipClusterId = clusterProfiles.FirstOrDefault()?.ClusterId ?? 0;
                     uint lowClusterId = clusterProfiles.LastOrDefault()?.ClusterId ?? 0;
 
+                    // Перетворення технічних ідентифікаторів K-Means
+                    // у бізнес-орієнтовані сегменти клієнтів
                     foreach (var item in predictions)
                     {
-                        int logicalId = (item.Pred.PredictedClusterId == vipClusterId) ? 3 : ((item.Pred.PredictedClusterId == lowClusterId) ? 1 : 2);
-                        string description = (logicalId == 3) ? "Високоцінний (VIP)" : ((logicalId == 1) ? "Новий / Рідкісний" : "Постійний (Середній)");
+                        int logicalId =
+                            (item.Pred.PredictedClusterId == vipClusterId) ? 3 :
+                            ((item.Pred.PredictedClusterId == lowClusterId) ? 1 : 2);
 
-                        result.Add(new ClusteredCustomer { CustomerId = item.Data.CustomerId, TotalSpent = item.Data.TotalSpent, PurchaseFrequency = item.Data.PurchaseFrequency, ClusterId = logicalId, ClusterDescription = description });
+                        string description =
+                            (logicalId == 3) ? "Високоцінний (VIP)" :
+                            ((logicalId == 1) ? "Новий / Рідкісний" : "Постійний (Середній)");
+
+                        result.Add(new ClusteredCustomer
+                        {
+                            CustomerId = item.Data.CustomerId,
+                            TotalSpent = item.Data.TotalSpent,
+                            PurchaseFrequency = item.Data.PurchaseFrequency,
+                            ClusterId = logicalId,
+                            ClusterDescription = description
+                        });
                     }
                 }
                 catch (Exception ex)
                 {
+                    // У разі помилки кластеризації всі клієнти
+                    // відносяться до нейтрального сегмента
                     System.Diagnostics.Debug.WriteLine($"Clustering Error: {ex.Message}");
+
                     foreach (var c in allData)
                     {
-                        result.Add(new ClusteredCustomer { CustomerId = c.CustomerId, TotalSpent = c.TotalSpent, PurchaseFrequency = c.PurchaseFrequency, ClusterId = 2, ClusterDescription = "Постійний (Середній)" });
+                        result.Add(new ClusteredCustomer
+                        {
+                            CustomerId = c.CustomerId,
+                            TotalSpent = c.TotalSpent,
+                            PurchaseFrequency = c.PurchaseFrequency,
+                            ClusterId = 2,
+                            ClusterDescription = "Постійний (Середній)"
+                        });
                     }
                 }
             }
@@ -198,15 +241,29 @@ public class DashboardController : Controller
                     predictionDataLinear = _predictionService.PredictNPeriods(modelLinear, nextIndex, PREDICTION_PERIODS, lastMonthValue);
 
                     // Математична оцінка точності
-                    var evaluateFastTree = _predictionService.MLContext.Regression.Evaluate(modelFastTree.Transform(dataView), "Label");
-                    var evaluateLinear = _predictionService.MLContext.Regression.Evaluate(modelLinear.Transform(dataView), "Label");
+                    var evaluateFastTree =
+                        _predictionService.MLContext.Regression.Evaluate(
+                            modelFastTree.Transform(dataView), "Label");
 
-                    double r2FastTree = Math.Round(Math.Max(0, evaluateFastTree.RSquared), 2);
-                    double r2Linear = Math.Round(Math.Max(0, evaluateLinear.RSquared), 2);
+                    var evaluateLinear =
+                        _predictionService.MLContext.Regression.Evaluate(
+                            modelLinear.Transform(dataView), "Label");
 
-                    // Отримуємо чисту похибку у вигляді цілого числа (гривень)
-                    int rmseFastTree = (int)evaluateFastTree.RootMeanSquaredError;
-                    int rmseLinear = (int)evaluateLinear.RootMeanSquaredError;
+                    // Округлення та обмеження R² до діапазону [0, 1]
+                    double r2FastTree =
+                        Math.Round(Math.Max(0, evaluateFastTree.RSquared), 2);
+
+                    // Округлення та обмеження R² до діапазону [0, 1]
+                    double r2Linear =
+                        Math.Round(Math.Max(0, evaluateLinear.RSquared), 2);
+
+                    // Округлення RMSE до цілих чисел для зручності відображення
+                    int rmseFastTree =
+                        (int)evaluateFastTree.RootMeanSquaredError;
+
+                    // Округлення RMSE до цілих чисел для зручності відображення
+                    int rmseLinear =
+                        (int)evaluateLinear.RootMeanSquaredError;
 
                     // Записуємо у ViewBag
                     ViewBag.R2FastTree = r2FastTree;
